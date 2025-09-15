@@ -5,6 +5,7 @@ const posix = std.posix;
 const linux = std.os.linux;
 
 const PACKET_SIZE = 2048;
+const QUEUE_SIZE = 10;
 
 pub const NetworkError = error{
     ReadError,
@@ -56,8 +57,8 @@ pub const raw_sock = struct {
         ret.* = .{
             .raw_sock = fd,
             .allocator = allocator,
-            .incomingQueue = try ch.Channel(Packet).init(allocator, 10),
-            .outgoingQueue = try ch.Channel(Packet).init(allocator, 10),
+            .incomingQueue = try ch.Channel(Packet).init(allocator, QUEUE_SIZE),
+            .outgoingQueue = try ch.Channel(Packet).init(allocator, QUEUE_SIZE),
             .cancelEvent = try std.posix.epoll_create1(0),
             .readWorker = undefined,
             .writeWorker = undefined,
@@ -123,25 +124,18 @@ pub const raw_sock = struct {
         const sel = select.Select.init(self.allocator) catch return;
         defer sel.deinit();
 
-        // CLOCK_MONOTONIC ベースの timerfd を作る
-        const tfd = posix.timerfd_create(posix.CLOCK.MONOTONIC, .{ .CLOEXEC = true }) catch return;
-        defer posix.close(tfd);
-
-        const timer_spec: linux.itimerspec = .{
-            .it_interval = .{ .tv_sec = 2, .tv_nsec = 0 },
-            .it_value = .{ .tv_sec = 2, .tv_nsec = 0 },
-        };
-        posix.timerfd_settime(tfd, .{}, &timer_spec, null) catch return;
+        const default_fd = select.createDefaultFd() catch return;
+        defer posix.close(default_fd);
 
         sel.add(self.cancelEvent) catch return;
-        sel.add(tfd) catch return;
+        sel.add(default_fd) catch return;
 
         while (true) {
             const ready = sel.wait() catch continue;
 
             if (ready == self.cancelEvent) {
                 return;
-            } else if (ready == tfd) {
+            } else if (ready == default_fd) {
                 const buf: [PACKET_SIZE]u8 = undefined;
                 const n = self._read(buf[0..]) catch continue;
                 var packet: Packet = undefined;

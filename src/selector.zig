@@ -1,8 +1,26 @@
 const std = @import("std");
 const posix = std.posix;
+const linux = std.os.linux;
 const channel = @import("channel.zig");
 
-pub const SelectTimeout = error{Timeout};
+const DEFAULT_TIMER_SEC = 2;
+
+pub const SelectTimeout = error{
+    Timeout,
+};
+
+pub fn createDefaultFd() !i32 {
+    // CLOCK_MONOTONIC ベースの timerfd を作る
+    const default_fd = try posix.timerfd_create(posix.CLOCK.MONOTONIC, .{ .CLOEXEC = true });
+
+    const timer_spec: linux.itimerspec = .{
+        .it_interval = .{ .tv_sec = DEFAULT_TIMER_SEC, .tv_nsec = 0 },
+        .it_value = .{ .tv_sec = DEFAULT_TIMER_SEC, .tv_nsec = 0 },
+    };
+    try posix.timerfd_settime(default_fd, .{}, &timer_spec, null);
+
+    return default_fd;
+}
 
 pub const Select = struct {
     const Self = @This();
